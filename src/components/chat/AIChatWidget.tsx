@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { Bot, MoreHorizontal, Send, User } from 'lucide-react';
-import ReactMarkdown from 'react-markdown'; // Import thư viện làm đẹp text
+import React, { useState, useEffect, useRef } from 'react';
+import { Bot, MoreHorizontal, Send } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import GlassCard from '../ui/GlassCard';
 import { ChatMessage, TreeNode, Alert } from '../../types';
+import { sendMessageWithFailover } from '../../utils/geminiManager';
 
 type AIChatProps = {
   isAutoDemo: boolean;
@@ -14,94 +14,93 @@ type AIChatProps = {
 
 const AIChatWidget = ({ isAutoDemo, treeNodes, sensorData, alerts }: AIChatProps) => {
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { id: 1, sender: 'ai', text: 'Xin chào! **GreenAI** đã kích hoạt. Dữ liệu 3 miền Bắc - Trung - Nam đã sẵn sàng. Bạn cần kiểm tra gì?' }
+    { id: 1, sender: 'ai', text: 'Xin chào! **GreenAI** đã kích hoạt. Tôi sẵn sàng phân tích dữ liệu 3 miền.' }
   ]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
-  const apiKey = import.meta.env.VITE_API_KEY || "";
-  
-  const genAI = useMemo(() => {
-    if (apiKey) return new GoogleGenerativeAI(apiKey);
-    return null;
-  }, [apiKey]);
-
   const createSystemPrompt = () => {
-      // Lọc ra top 3 cây có nguy cơ đổ cao nhất (Dự báo tương lai)
-      const topRisks = treeNodes
-          .sort((a, b) => b.fallProbability - a.fallProbability)
-          .slice(0, 3);
+    const northNodes = treeNodes.filter(n => n.region === 'north');
+    const centralNodes = treeNodes.filter(n => n.region === 'central');
+    const southNodes = treeNodes.filter(n => n.region === 'south');
 
-      const formatRisk = (nodes: TreeNode[]) => nodes.map(n => 
-          `Cây **${n.id}** (Nguy cơ đổ: ${n.fallProbability}%): Nghiêng ${n.tilt}°, Tốc độ nghiêng tăng ${n.tiltRate}°/giờ, Đất ẩm ${n.soilMoisture}%, Rễ còn ${n.rootHealth}%`
-      ).join('\n');
-
-      return `
-        VAI TRÒ: Chuyên gia phân tích rủi ro cây xanh (Predictive Maintenance AI).
-        
-        DỮ LIỆU DỰ BÁO (FUTURE FORECAST):
-        Hệ thống phát hiện 3 cây có nguy cơ gãy đổ cao nhất trong 24h tới:
-        ${formatRisk(topRisks)}
-
-        NHIỆM VỤ:
-        1. Nếu người dùng hỏi "Cây nào sắp đổ?" hoặc "Dự báo rủi ro", hãy phân tích dựa trên dữ liệu trên.
-        2. GIẢI THÍCH LÝ DO (QUAN TRỌNG): 
-          - Nếu "Tốc độ nghiêng" > 0, hãy cảnh báo là cây đang mất thăng bằng động.
-          - Nếu "Đất ẩm" > 80%, hãy cảnh báo nền đất yếu do mưa/ngập.
-          - Nếu "Rễ" < 50%, cảnh báo hệ thống rễ bị tổn thương.
-        3. Đưa ra khuyến nghị cụ thể (Ví dụ: Cần chằng chống ngay, Cần phong tỏa khu vực...).
-        
-        Lưu ý: Luôn dùng ngôn ngữ chuyên ngành nhưng dễ hiểu (như "Gia cố", "Cắt tỉa tán", "Phong tỏa").
-      `;
+    const formatCritical = (nodes: TreeNode[]) => nodes.filter(n => n.status === 'critical').map(n => `**${n.id}**(${n.tilt.toFixed(0)}°)`);
+    const summary = (nodes: TreeNode[]) => {
+       const crit = nodes.filter(n => n.status === 'critical').length;
+       const warn = nodes.filter(n => n.status === 'warning').length;
+       return `${nodes.length} cây (🔴${crit}, 🟡${warn})`;
     };
 
+    const topRisks = [...treeNodes].sort((a, b) => (b.fallProbability || 0) - (a.fallProbability || 0)).slice(0, 3);
+    const riskReport = topRisks.map(n => 
+        `- **${n.id}** (Nguy cơ ${n.fallProbability}%): Nghiêng tăng ${n.tiltRate}°/h, Đất ẩm ${n.soilMoisture}%, Rễ ${n.rootHealth}%`
+    ).join('\n');
+
+    return `
+      VAI TRÒ: Bạn là "GreenAI" - Chuyên gia giám sát & Dự báo rủi ro cây xanh.
+      === PHẦN 1: DỮ LIỆU HIỆN TẠI ===
+      - 🏞️ **Miền Bắc**: ${summary(northNodes)}. Cây đỏ: [${formatCritical(northNodes).join(', ') || "Không"}].
+      - 🏖️ **Miền Trung**: ${summary(centralNodes)}. Cây đỏ: [${formatCritical(centralNodes).join(', ') || "Không"}].
+      - 🏙️ **Miền Nam**: ${summary(southNodes)}. Cây đỏ: [${formatCritical(southNodes).join(', ') || "Không"}].
+      - 🌡️ **Môi trường**: Nhiệt độ ${sensorData.temp.toFixed(1)}°C, AQI ${sensorData.aqi}.
+      === PHẦN 2: DỮ LIỆU DỰ BÁO (24H TỚI) ===
+      ${riskReport}
+      === QUY TẮC TRẢ LỜI ===
+      1. **Định dạng Markdown:** In đậm thông số, gạch đầu dòng.
+      2. **Khi hỏi về Hiện trạng:** Báo cáo ngắn gọn 3 miền.
+      3. **Khi hỏi về Dự báo:** 
+         🚨 **CẢNH BÁO DỰ BÁO 24H:**
+         *   ⚠️ **[ID Cây]** (Nguy cơ [X]%):
+             *   📉 *Nguyên nhân:* [Ngắn gọn].
+             *   🛡️ *Khuyến nghị:* [Ngắn gọn].
+    `;
+  };
+
   const handleSend = async () => {
-    // FIX LỖI DOUBLE ENTER: Kiểm tra nếu đang gõ hoặc input rỗng thì chặn luôn
+    // CHẶN DOUBLE SUBMIT: Kiểm tra kỹ trạng thái
     if (isTyping || !input.trim()) return;
     
     const userText = input;
-    setInput(""); // Xóa input ngay lập tức
-    setIsTyping(true); // Khóa trạng thái ngay
+    setInput(""); 
+    setIsTyping(true); // Khóa ngay lập tức
 
-    // Thêm tin nhắn user
     setMessages(prev => [...prev, { id: Date.now(), sender: 'user', text: userText }]);
 
     try {
-      if (genAI && apiKey) {
-        const model = genAI.getGenerativeModel({ 
-          model: import.meta.env.VITE_MODEL, 
-          systemInstruction: createSystemPrompt()
-        });
-        
-        const history = messages.slice(1).map(m => ({
+      const history = messages.slice(1).map(m => ({
             role: m.sender === 'user' ? 'user' : 'model',
             parts: [{ text: String(m.text) }]
-        }));
+      }));
 
-        const chat = model.startChat({ history });
-        const result = await chat.sendMessage(userText);
-        const responseText = result.response.text();
-        
-        setMessages(prev => [...prev, { id: Date.now() + Math.random(), sender: 'ai', text: responseText }]);
+      const responseText = await sendMessageWithFailover(
+        userText,
+        history,
+        createSystemPrompt()
+      );
+      
+      setMessages(prev => [...prev, { id: Date.now() + Math.random(), sender: 'ai', text: responseText }]);
 
-      } else {
-        await new Promise(r => setTimeout(r, 1000));
-        setMessages(prev => [...prev, { id: Date.now(), sender: 'ai', text: "⚠️ **Lỗi:** Chưa có API Key." }]);
-      }
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      setMessages(prev => [...prev, { id: Date.now(), sender: 'ai', text: "⚠️ **Mất kết nối:** Vui lòng thử lại sau giây lát." }]);
+      const errorMsg = error.message?.includes("API Keys") 
+        ? "⚠️ Lỗi cấu hình: Chưa tìm thấy API Key. Hãy Restart Server."
+        : "⚠️ Hệ thống quá tải: Vui lòng thử lại sau 24h.";
+        
+      setMessages(prev => [...prev, { id: Date.now(), sender: 'ai', text: errorMsg }]);
     } finally {
-      setIsTyping(false); // Mở khóa trạng thái
+      setIsTyping(false); // Mở khóa
     }
   };
 
-  // Hàm xử lý phím Enter riêng biệt để chặn sự kiện mặc định
+  // HÀM XỬ LÝ PHÍM ĐƯỢC NÂNG CẤP
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Nếu đang gõ tiếng Việt (IME composing) thì không gửi
+    if (e.nativeEvent.isComposing) return;
+
     if (e.key === 'Enter') {
-        e.preventDefault(); // <--- QUAN TRỌNG: Chặn hành vi xuống dòng hoặc submit form mặc định
-        handleSend();
+        e.preventDefault(); // Chặn xuống dòng
+        handleSend();       // Gọi gửi tin
     }
   };
 
@@ -119,8 +118,8 @@ const AIChatWidget = ({ isAutoDemo, treeNodes, sensorData, alerts }: AIChatProps
           <div>
             <div className="text-sm font-bold text-white">GreenAI Assistant</div>
             <div className="text-[10px] text-emerald-400 flex items-center gap-1">
-              <span className={`w-1.5 h-1.5 rounded-full ${apiKey ? "bg-emerald-400" : "bg-red-400"} animate-pulse`}></span>
-              {apiKey ? "Online" : "Offline"}
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              Multi-Key Connected
             </div>
           </div>
         </div>
@@ -137,7 +136,6 @@ const AIChatWidget = ({ isAutoDemo, treeNodes, sensorData, alerts }: AIChatProps
                 ? 'bg-emerald-600 text-white rounded-tr-none' 
                 : 'bg-white/10 text-slate-200 rounded-tl-none border border-white/5'
             }`}>
-              {/* RENDER MARKDOWN TẠI ĐÂY */}
               {msg.sender === 'user' ? (
                  msg.text
               ) : (
@@ -173,9 +171,9 @@ const AIChatWidget = ({ isAutoDemo, treeNodes, sensorData, alerts }: AIChatProps
             type="text" 
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown} // Dùng hàm xử lý riêng
-            disabled={isTyping} // Khóa input khi đang chờ AI trả lời
-            placeholder={isTyping ? "GreenAI đang trả lời..." : "Hỏi về tình trạng cây..."}
+            onKeyDown={handleKeyDown} 
+            disabled={isTyping}
+            placeholder={isTyping ? "Đang xử lý..." : "Hỏi GreenAI..."}
             className="bg-transparent border-none outline-none text-sm text-white px-3 py-2 flex-1 placeholder-slate-500 disabled:opacity-50"
           />
           <button 

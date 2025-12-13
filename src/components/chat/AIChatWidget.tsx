@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Bot, MoreHorizontal, Send } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { Bot, MoreHorizontal, Send, Trash2 } from 'lucide-react'; // Thêm icon thùng rác để xóa chat
 import ReactMarkdown from 'react-markdown';
 import GlassCard from '../ui/GlassCard';
 import { ChatMessage, TreeNode, Alert } from '../../types';
@@ -14,57 +15,67 @@ type AIChatProps = {
 
 const AIChatWidget = ({ isAutoDemo, treeNodes, sensorData, alerts }: AIChatProps) => {
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { id: 1, sender: 'ai', text: 'Xin chào! **GreenAI** đã kích hoạt. Tôi sẵn sàng phân tích dữ liệu 3 miền.' }
+    { id: 1, sender: 'ai', text: 'Xin chào! **GreenAI** đã kết nối dữ liệu thời gian thực. Hệ thống đang giám sát chặt chẽ 3 miền. Bạn cần báo cáo gì?' }
   ]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
+  // --- HÀM TẠO PROMPT "THẦN THÁNH" (Kết hợp Báo cáo & Dự báo) ---
   const createSystemPrompt = () => {
+    // 1. Phân tích dữ liệu hiện tại
     const northNodes = treeNodes.filter(n => n.region === 'north');
     const centralNodes = treeNodes.filter(n => n.region === 'central');
     const southNodes = treeNodes.filter(n => n.region === 'south');
 
-    const formatCritical = (nodes: TreeNode[]) => nodes.filter(n => n.status === 'critical').map(n => `**${n.id}**(${n.tilt.toFixed(0)}°)`);
-    const summary = (nodes: TreeNode[]) => {
-       const crit = nodes.filter(n => n.status === 'critical').length;
-       const warn = nodes.filter(n => n.status === 'warning').length;
-       return `${nodes.length} cây (🔴${crit}, 🟡${warn})`;
+    // Hàm format hiển thị cây lỗi
+    const formatNodes = (nodes: TreeNode[]) => {
+       const critical = nodes.filter(n => n.status === 'critical');
+       if (critical.length === 0) return "Tình trạng ổn định ✅";
+       return critical.map(n => `⚠️ **${n.id}** (Nghiêng ${n.tilt.toFixed(1)}°)`).join(', ');
     };
 
-    const topRisks = [...treeNodes].sort((a, b) => (b.fallProbability || 0) - (a.fallProbability || 0)).slice(0, 3);
-    const riskReport = topRisks.map(n => 
-        `- **${n.id}** (Nguy cơ ${n.fallProbability}%): Nghiêng tăng ${n.tiltRate}°/h, Đất ẩm ${n.soilMoisture}%, Rễ ${n.rootHealth}%`
-    ).join('\n');
+    const countStatus = (nodes: TreeNode[]) => {
+       const c = nodes.filter(n => n.status === 'critical').length;
+       const w = nodes.filter(n => n.status === 'warning').length;
+       return c > 0 ? `🔴 ${c} Nguy hiểm` : w > 0 ? `🟡 ${w} Cảnh báo` : `🟢 An toàn`;
+    }
+
+    // 2. Tìm top cây có nguy cơ cao nhất (Dù hiện tại vẫn xanh nhưng chỉ số ẩn xấu)
+    const futureRisks = [...treeNodes]
+        .sort((a, b) => (b.fallProbability || 0) - (a.fallProbability || 0))
+        .slice(0, 3)
+        .map(n => `- 🌲 **${n.id}** (${n.region === 'north' ? 'Bắc' : n.region === 'central' ? 'Trung' : 'Nam'}): Nguy cơ đổ **${n.fallProbability}%** (Rễ ${n.rootHealth}%, Đất ẩm ${n.soilMoisture}%)`)
+        .join('\n');
 
     return `
-      VAI TRÒ: Bạn là "GreenAI" - Chuyên gia giám sát & Dự báo rủi ro cây xanh.
-      === PHẦN 1: DỮ LIỆU HIỆN TẠI ===
-      - 🏞️ **Miền Bắc**: ${summary(northNodes)}. Cây đỏ: [${formatCritical(northNodes).join(', ') || "Không"}].
-      - 🏖️ **Miền Trung**: ${summary(centralNodes)}. Cây đỏ: [${formatCritical(centralNodes).join(', ') || "Không"}].
-      - 🏙️ **Miền Nam**: ${summary(southNodes)}. Cây đỏ: [${formatCritical(southNodes).join(', ') || "Không"}].
-      - 🌡️ **Môi trường**: Nhiệt độ ${sensorData.temp.toFixed(1)}°C, AQI ${sensorData.aqi}.
-      === PHẦN 2: DỮ LIỆU DỰ BÁO (24H TỚI) ===
-      ${riskReport}
+      VAI TRÒ: Trợ lý ảo AI chuyên trách giám sát hệ thống Green Safe.
+      PHONG CÁCH: Ngắn gọn, súc tích, dùng gạch đầu dòng, chuyên nghiệp (Technical Report).
+
+      === DỮ LIỆU THỜI GIAN THỰC (LIVE STATUS) ===
+      *   🌡️ **Môi trường:** Temp ${sensorData.temp.toFixed(1)}°C | AQI ${sensorData.aqi} | Noise ${sensorData.noise}dB
+      *   🏞️ **Miền Bắc:** ${countStatus(northNodes)}. Chi tiết: ${formatNodes(northNodes)}
+      *   🏖️ **Miền Trung:** ${countStatus(centralNodes)}. Chi tiết: ${formatNodes(centralNodes)}
+      *   🏙️ **Miền Nam:** ${countStatus(southNodes)}. Chi tiết: ${formatNodes(southNodes)}
+
+      === DỮ LIỆU DỰ BÁO RỦI RO (PREDICTIVE DATA) ===
+      (Dùng khi người dùng hỏi về tương lai/sắp đổ/nguy cơ tiềm ẩn)
+      ${futureRisks}
+
       === QUY TẮC TRẢ LỜI ===
-      1. **Định dạng Markdown:** In đậm thông số, gạch đầu dòng.
-      2. **Khi hỏi về Hiện trạng:** Báo cáo ngắn gọn 3 miền.
-      3. **Khi hỏi về Dự báo:** 
-         🚨 **CẢNH BÁO DỰ BÁO 24H:**
-         *   ⚠️ **[ID Cây]** (Nguy cơ [X]%):
-             *   📉 *Nguyên nhân:* [Ngắn gọn].
-             *   🛡️ *Khuyến nghị:* [Ngắn gọn].
+      1. **Nếu hỏi về "Tình trạng hiện tại":** Báo cáo nhanh theo 3 miền. Nếu miền nào an toàn thì ghi "An toàn", không cần liệt kê cây.
+      2. **Nếu hỏi về "Cây nào sắp đổ" / "Dự báo":** Sử dụng dữ liệu PREDICTIVE DATA để trả lời. Giải thích nguyên nhân do rễ yếu hoặc đất ẩm.
+      3. **Nếu hỏi câu ngoài lề:** Từ chối lịch sự.
+      4. **Định dạng:** Bắt buộc dùng Markdown (**đậm**, - gạch dòng) để dễ đọc. KHÔNG viết văn xuôi dài dòng.
     `;
   };
 
   const handleSend = async () => {
-    // CHẶN DOUBLE SUBMIT: Kiểm tra kỹ trạng thái
     if (isTyping || !input.trim()) return;
     
     const userText = input;
     setInput(""); 
-    setIsTyping(true); // Khóa ngay lập tức
-
+    setIsTyping(true); 
     setMessages(prev => [...prev, { id: Date.now(), sender: 'user', text: userText }]);
 
     try {
@@ -82,34 +93,23 @@ const AIChatWidget = ({ isAutoDemo, treeNodes, sensorData, alerts }: AIChatProps
       setMessages(prev => [...prev, { id: Date.now() + Math.random(), sender: 'ai', text: responseText }]);
 
     } catch (error: any) {
-      console.error(error);
-      const errorMsg = error.message?.includes("API Keys") 
-        ? "⚠️ Lỗi cấu hình: Chưa tìm thấy API Key. Hãy Restart Server."
-        : "⚠️ Hệ thống quá tải: Vui lòng thử lại sau 24h.";
-        
-      setMessages(prev => [...prev, { id: Date.now(), sender: 'ai', text: errorMsg }]);
+      setMessages(prev => [...prev, { id: Date.now(), sender: 'ai', text: "⚠️ Hệ thống đang bận. Vui lòng thử lại." }]);
     } finally {
-      setIsTyping(false); // Mở khóa
+      setIsTyping(false); 
     }
   };
 
-  // HÀM XỬ LÝ PHÍM ĐƯỢC NÂNG CẤP
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Nếu đang gõ tiếng Việt (IME composing) thì không gửi
     if (e.nativeEvent.isComposing) return;
-
     if (e.key === 'Enter') {
-        e.preventDefault(); // Chặn xuống dòng
-        handleSend();       // Gọi gửi tin
+        e.preventDefault(); 
+        handleSend();
     }
   };
-
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isTyping]);
 
   return (
     <GlassCard className="flex flex-col h-full !p-0" noPadding>
+      {/* HEADER */}
       <div className="p-4 border-b border-white/10 bg-white/5 flex justify-between items-center">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-500/20">
@@ -119,15 +119,20 @@ const AIChatWidget = ({ isAutoDemo, treeNodes, sensorData, alerts }: AIChatProps
             <div className="text-sm font-bold text-white">GreenAI Assistant</div>
             <div className="text-[10px] text-emerald-400 flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              Multi-Key Connected
+              Live Connected
             </div>
           </div>
         </div>
-        <button className="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-slate-400">
-          <MoreHorizontal className="w-4 h-4" />
+        {/* Nút xóa lịch sử chat để đỡ rối */}
+        <button 
+            onClick={() => setMessages([{ id: 1, sender: 'ai', text: 'Hệ thống đã reset hội thoại. Mời bạn đặt lệnh.' }])}
+            className="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-slate-400 hover:text-red-400" title="Xóa lịch sử chat"
+        >
+          <Trash2 className="w-4 h-4" />
         </button>
       </div>
 
+      {/* CHAT BODY */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar max-h-[400px]">
         {messages.map((msg) => (
           <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -144,7 +149,7 @@ const AIChatWidget = ({ isAutoDemo, treeNodes, sensorData, alerts }: AIChatProps
                         strong: ({node, ...props}) => <span className="font-bold text-emerald-300" {...props} />,
                         ul: ({node, ...props}) => <ul className="list-disc list-inside space-y-1 my-1" {...props} />,
                         li: ({node, ...props}) => <li className="text-slate-200" {...props} />,
-                        p: ({node, ...props}) => <p className="mb-1 last:mb-0" {...props} />
+                        p: ({node, ...props}) => <p className="mb-2 last:mb-0" {...props} />
                     }}
                  >
                     {msg.text as string}
@@ -165,6 +170,7 @@ const AIChatWidget = ({ isAutoDemo, treeNodes, sensorData, alerts }: AIChatProps
         <div ref={endRef} />
       </div>
 
+      {/* INPUT AREA */}
       <div className="p-3 border-t border-white/10 bg-black/20">
         <div className="flex items-center gap-2 bg-white/5 rounded-xl p-1 border border-white/10 focus-within:border-emerald-500/50 transition-colors">
           <input 
@@ -173,7 +179,7 @@ const AIChatWidget = ({ isAutoDemo, treeNodes, sensorData, alerts }: AIChatProps
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown} 
             disabled={isTyping}
-            placeholder={isTyping ? "Đang xử lý..." : "Hỏi GreenAI..."}
+            placeholder={isTyping ? "GreenAI đang phân tích..." : "Hỏi: Miền Bắc thế nào? / Cây nào sắp đổ?"}
             className="bg-transparent border-none outline-none text-sm text-white px-3 py-2 flex-1 placeholder-slate-500 disabled:opacity-50"
           />
           <button 

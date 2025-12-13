@@ -27,7 +27,6 @@ const Sidebar = ({
     { id: 'dashboard', icon: LayoutDashboard, label: 'Tổng quan' },
     { id: 'architecture', icon: Layers, label: 'Kiến trúc hệ thống' },
     { id: 'map', icon: MapIcon, label: 'Bản đồ Số' },
-    { id: 'devices', icon: Cpu, label: 'Thiết bị AIoT' },
     { id: 'alerts', icon: AlertTriangle, label: 'Cảnh báo' },
   ];
 

@@ -17,7 +17,12 @@ export const sendMessageWithFailover = async (
   if (API_KEYS.length === 0) {
     throw new Error("Không tìm thấy Key nào trong VITE_API_KEYS. Hãy kiểm tra file .env và Restart Server.");
   }
-
+  // CẤU HÌNH CHO AI BỚT SÁNG TẠO, TĂNG TÍNH LOGIC
+  const generationConfig = {
+    temperature: 0.2, // Rất thấp -> Trả lời cực kỳ ổn định, ít biến đổi
+    topP: 0.8,
+    topK: 40,
+  };
   const shuffledKeys = [...API_KEYS].sort(() => 0.5 - Math.random());
   let lastError = null;
 
@@ -26,7 +31,8 @@ export const sendMessageWithFailover = async (
       const genAI = new GoogleGenerativeAI(key);
       const model = genAI.getGenerativeModel({ 
         model: MODEL_NAME, 
-        systemInstruction: systemInstruction
+        systemInstruction: systemInstruction,
+        generationConfig: generationConfig
       });
 
       const chat = model.startChat({ history });
